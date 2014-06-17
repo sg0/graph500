@@ -42,10 +42,17 @@ void run_bfs(int64_t root, int64_t* pred) {
   const size_t nlocalverts = g.nlocalverts;
   const int64_t nglobalverts = g.nglobalverts;
 
+  MPI_Win pred_win, pred2_win, queue1_win, queue2_win;
+
   /* Set up a second predecessor map so we can read from one and modify the
    * other. */
   int64_t* orig_pred = pred;
+
+  MPI_Win_create(pred, nlocalverts * sizeof(int64_t), sizeof(int64_t), MPI_INFO_NULL, MPI_COMM_WORLD, &pred_win);
+
+  /* TODO: fuse into win_allocate once we determine it is valid - see below (noted "THIS IS GROSS") */
   int64_t* pred2 = (int64_t*)xMPI_Alloc_mem(nlocalverts * sizeof(int64_t));
+  MPI_Win_create(pred2, nlocalverts * sizeof(int64_t), sizeof(int64_t), MPI_INFO_NULL, MPI_COMM_WORLD, &pred2_win);
 
   /* The queues (old and new) are represented as bitmaps.  Each bit in the
    * queue bitmap says to check elts_per_queue_bit elements in the predecessor
@@ -59,9 +66,16 @@ void run_bfs(int64_t root, int64_t* pred) {
   const int ulong_bits = sizeof(unsigned long) * CHAR_BIT;
   int64_t queue_nbits = (nlocalverts + elts_per_queue_bit - 1) / elts_per_queue_bit;
   int64_t queue_nwords = (queue_nbits + ulong_bits - 1) / ulong_bits;
+
+  /* TODO: fuse into win_allocate */
   unsigned long* queue_bitmap1 = (unsigned long*)xMPI_Alloc_mem(queue_nwords * sizeof(unsigned long));
-  unsigned long* queue_bitmap2 = (unsigned long*)xMPI_Alloc_mem(queue_nwords * sizeof(unsigned long));
+  MPI_Win_create(queue_bitmap1, queue_nwords * sizeof(unsigned long), sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &queue1_win);
+
   memset(queue_bitmap1, 0, queue_nwords * sizeof(unsigned long));
+
+  /* TODO: fuse into win_allocate */
+  unsigned long* queue_bitmap2 = (unsigned long*)xMPI_Alloc_mem(queue_nwords * sizeof(unsigned long));
+  MPI_Win_create(queue_bitmap2, queue_nwords * sizeof(unsigned long), sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &queue2_win);
 
   /* List of local vertices (used as sources in MPI_Accumulate). */
   int64_t* local_vertices = (int64_t*)xMPI_Alloc_mem(nlocalverts * sizeof(int64_t));
@@ -87,11 +101,6 @@ void run_bfs(int64_t root, int64_t* pred) {
   }
 
   /* Create MPI windows on the two predecessor arrays and the two queues. */
-  MPI_Win pred_win, pred2_win, queue1_win, queue2_win;
-  MPI_Win_create(pred, nlocalverts * sizeof(int64_t), sizeof(int64_t), MPI_INFO_NULL, MPI_COMM_WORLD, &pred_win);
-  MPI_Win_create(pred2, nlocalverts * sizeof(int64_t), sizeof(int64_t), MPI_INFO_NULL, MPI_COMM_WORLD, &pred2_win);
-  MPI_Win_create(queue_bitmap1, queue_nwords * sizeof(unsigned long), sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &queue1_win);
-  MPI_Win_create(queue_bitmap2, queue_nwords * sizeof(unsigned long), sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &queue2_win);
 
   while (1) {
     int64_t i;
@@ -160,6 +169,7 @@ void run_bfs(int64_t root, int64_t* pred) {
     if (!any_set) break;
 
     /* Swap queues and predecessor maps. */
+    /* THIS IS GROSS */
     {MPI_Win temp = queue1_win; queue1_win = queue2_win; queue2_win = temp;}
     {unsigned long* temp = queue_bitmap1; queue_bitmap1 = queue_bitmap2; queue_bitmap2 = temp;}
     {MPI_Win temp = pred_win; pred_win = pred2_win; pred2_win = temp;}
@@ -167,14 +177,20 @@ void run_bfs(int64_t root, int64_t* pred) {
   }
   MPI_Win_free(&pred_win);
   MPI_Win_free(&pred2_win);
-  MPI_Win_free(&queue1_win);
-  MPI_Win_free(&queue2_win);
+
   MPI_Free_mem(local_vertices);
+
+  /* TODO: remove free_mem once win_allocate used */
+  MPI_Win_free(&queue1_win);
   MPI_Free_mem(queue_bitmap1);
+
+  /* TODO: remove free_mem once win_allocate used */
+  MPI_Win_free(&queue2_win);
   MPI_Free_mem(queue_bitmap2);
 
   /* Clean up the predecessor map swapping since the surrounding code does not
    * allow the BFS to change the predecessor map pointer. */
+  /* THIS IS GROSS */
   if (pred2 != orig_pred) {
     memcpy(orig_pred, pred2, nlocalverts * sizeof(int64_t));
     MPI_Free_mem(pred2);
