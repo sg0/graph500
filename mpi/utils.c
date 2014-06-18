@@ -104,3 +104,13 @@ void* xMPI_Alloc_mem(size_t nbytes) {
   }
   return p;
 }
+
+int xMPI_Win_allocate(MPI_Aint size, int disp_unit, MPI_Info info, MPI_Comm comm, void *baseptr, MPI_Win *win)
+{
+  int rc = MPI_Win_allocate(size, disp_unit, info, comm, baseptr, win);
+  if ((size>0 && baseptr==NULL) || rc!=MPI_SUCCESS) {
+    fprintf(stderr, "MPI_Win_allocate failed for size %zu\n", size);
+    MPI_Abort(comm, 1);
+  }
+  return rc;
+}

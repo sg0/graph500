@@ -149,6 +149,9 @@ void* xMPI_Alloc_mem(size_t nbytes); /* In utils.c */
 void* xmalloc(size_t nbytes); /* In utils.c */
 void* xcalloc(size_t n, size_t unit); /* In utils.c */
 void* xrealloc(void* p, size_t nbytes); /* In utils.c */
+#ifndef OLD_MPI_RMA
+int xMPI_Win_allocate(MPI_Aint size, int disp_unit, MPI_Info info, MPI_Comm comm, void *baseptr, MPI_Win *win); /* In utils.c */
+#endif
 
 int validate_bfs_result(const tuple_graph* const tg, const int64_t nglobalverts, const size_t nlocalverts, const int64_t root, int64_t* const pred, int64_t* const edge_visit_count_ptr); /* In validate.c */
 
