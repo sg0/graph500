@@ -297,6 +297,32 @@ bfs_bottom_up_step(int64_t *bfs_tree, bitmap_t *past, bitmap_t *next)
   OMP("omp single")
     awake_count = 0;
   OMP("omp barrier");
+#if defined(ZFILL_CACHE_LINES) && defined(__ARM_ARCH) && __ARM_ARCH >= 8
+  int64_t NV_blk_sz = nv / I64_ELEMS_PER_CACHE_LINE;
+  OMP("omp for reduction(+ : awake_count)")
+  for (int64_t i=0; i<NV_blk_sz; i++) {
+    int64_t NV_beg = i * I64_ELEMS_PER_CACHE_LINE;
+    int64_t NV_end = MIN(nv, ((i + 1) * I64_ELEMS_PER_CACHE_LINE));
+    
+    zero(next, NV_beg, NV_end);
+
+    for(int64_t k = 0; k < I64_ELEMS_PER_CACHE_LINE; k++) {  
+      if (bfs_tree[NV_beg+k] == -1) {
+        for (int64_t vo = XOFF(NV_beg+k); vo < XENDOFF(NV_beg+k); vo++) {
+	    const int64_t j = xadj[vo];
+	  if (bm_get_bit(past, j)) {
+	    // printf("%lu\n",i);
+	    bfs_tree[NV_beg + k] = j;
+	    //bm_set_bit_atomic(next, NV_beg + k);
+	    bm_set_bit(next, NV_beg + k);
+	    awake_count++;
+	    break;
+	  }
+	}
+      }
+    }
+  }
+#else
   OMP("omp for reduction(+ : awake_count)")
     for (int64_t i=0; i<nv; i++) {
       if (bfs_tree[i] == -1) {
@@ -305,13 +331,15 @@ bfs_bottom_up_step(int64_t *bfs_tree, bitmap_t *past, bitmap_t *next)
 	  if (bm_get_bit(past, j)) {
 	    // printf("%lu\n",i);
 	    bfs_tree[i] = j;
-	    bm_set_bit_atomic(next, i);
+	    //bm_set_bit_atomic(next, i);
+	    bm_set_bit(next, i);
 	    awake_count++;
 	    break;
 	  }
 	}
       }
     }
+#endif
   OMP("omp barrier");
   return awake_count;
 }
