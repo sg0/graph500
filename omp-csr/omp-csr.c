@@ -297,7 +297,7 @@ bfs_bottom_up_step(int64_t *bfs_tree, bitmap_t *past, bitmap_t *next)
   OMP("omp single")
     awake_count = 0;
   OMP("omp barrier");
-#if defined(ZFILL_CACHE_LINES) && defined(__ARM_ARCH) && __ARM_ARCH >= 8
+#if 0
   int64_t NV_blk_sz = nv / I64_ELEMS_PER_CACHE_LINE;
   OMP("omp for reduction(+ : awake_count)")
   for (int64_t i=0; i<NV_blk_sz; i++) {
@@ -322,6 +322,57 @@ bfs_bottom_up_step(int64_t *bfs_tree, bitmap_t *past, bitmap_t *next)
       }
     }
   }
+#endif
+#if defined(ZFILL_CACHE_LINES) && defined(__ARM_ARCH) && __ARM_ARCH >= 8
+   int const tid = omp_get_thread_num();
+   int const nthreads = omp_get_num_threads();
+   size_t const chunk = nv / nthreads;
+   int64_t NV_left = nv % I64_ELEMS_PER_CACHE_LINE;
+
+   uint64_t * const zfill_limit = next->start + WORD_OFFSET((tid+1)*chunk) - U64_ZFILL_OFFSET;
+	  
+   OMP("omp for reduction(+ : awake_count)")
+   for (int64_t i=0; i<nv; i+=I64_ELEMS_PER_CACHE_LINE) {
+    uint64_t * const ustart = next->start + WORD_OFFSET(i);
+    if (ustart + U64_ZFILL_OFFSET < zfill_limit)
+       zfill_u64(ustart + U64_ZFILL_OFFSET);
+
+    for(int64_t k = 0; k < I64_ELEMS_PER_CACHE_LINE; k++) {  
+      if (bfs_tree[i+k] == -1) {
+        for (int64_t vo = XOFF(i+k); vo < XENDOFF(i+k); vo++) {
+	    const int64_t j = xadj[vo];
+	  if (bm_get_bit(past, j)) {
+	    // printf("%lu\n",i);
+	    bfs_tree[i + k] = j;
+	    //bm_set_bit_atomic(next, NV_beg + k);
+	    bm_set_bit(next, i + k);
+	    awake_count++;
+	    break;
+	  }
+	}
+      }
+    }
+  }
+   /*
+  if (NV_left > 0 && tid == 0)
+  {
+    for (int64_t i=nv-NV_left; i<nv; i++) {
+      if (bfs_tree[i] == -1) {
+	  for (int64_t vo = XOFF(i); vo < XENDOFF(i); vo++) {
+	    const int64_t j = xadj[vo];
+	  if (bm_get_bit(past, j)) {
+	    // printf("%lu\n",i);
+	    bfs_tree[i] = j;
+	    //bm_set_bit_atomic(next, i);
+	    bm_set_bit(next, i);
+	    awake_count++;
+	    break;
+	  }
+	}
+      }
+    }
+  }
+  */
 #else
   OMP("omp for reduction(+ : awake_count)")
     for (int64_t i=0; i<nv; i++) {
@@ -350,7 +401,7 @@ bfs_top_down_step(int64_t *bfs_tree, int64_t *vlist, int64_t *local, int64_t *k1
   const int64_t oldk2 = *k2_p;
   int64_t kbuf = 0;
   OMP("omp barrier");
-  OMP("omp for")
+    OMP("omp for")
 	for (int64_t k = *k1_p; k < oldk2; ++k) {
 	  const int64_t v = vlist[k];
 	  const int64_t veo = XENDOFF(v);
